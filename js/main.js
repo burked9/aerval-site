@@ -155,6 +155,107 @@ document.addEventListener('DOMContentLoaded', () => {
     requestAnimationFrame(boot);
   }
 
+  /* ---------- tween a number; cancels any tween already running on the same element ---------- */
+  function tween(el, from, to, dur, draw) {
+    cancelAnimationFrame(el.__raf);
+    if (reduce || from === to) { draw(to); return; }
+    const t0 = performance.now();
+    (function frame(t) {
+      const p = Math.min(1, Math.max(0, (t - t0) / dur));
+      draw(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+      if (p < 1) el.__raf = requestAnimationFrame(frame);
+    })(t0);
+  }
+
+  /* ---------- accordions ---------- */
+  document.querySelectorAll('.acc-btn').forEach(btn => {
+    const panel = document.getElementById(btn.getAttribute('aria-controls'));
+    const set = open => { btn.setAttribute('aria-expanded', String(open)); panel.hidden = !open; };
+    btn.addEventListener('click', () => set(btn.getAttribute('aria-expanded') !== 'true'));
+    btn.addEventListener('keydown', e => { if (e.key === 'Escape') set(false); });
+  });
+
+  /* ---------- valuation card: worst / base / ceiling ---------- */
+  document.querySelectorAll('[data-valuation]').forEach(card => {
+    const out = card.querySelector('[data-out]');
+    const label = card.querySelector('[data-out-label]');
+    const btns = [...card.querySelectorAll('[data-scenario]')];
+    const rows = [...card.querySelectorAll('[data-row]')];
+    let shown = +out.textContent.replace(/\D/g, '');
+    btns.forEach(b => b.addEventListener('click', () => {
+      btns.forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      rows.forEach(r => r.classList.toggle('dim', r.dataset.row !== b.dataset.scenario));
+      label.textContent = b.textContent + ' value';
+      const to = +b.dataset.value;
+      tween(out, shown, to, 600, v => { out.textContent = '$' + Math.round(v).toLocaleString('en-US'); });
+      shown = to;
+    }));
+  });
+
+  /* ---------- deal card: slider sets the deal value, rows share it pro rata ---------- */
+  document.querySelectorAll('[data-deal]').forEach(card => {
+    const range = card.querySelector('input[type=range]');
+    const total = card.querySelector('[data-total]');
+    const sum = card.querySelector('[data-sum]');
+    const rows = [...card.querySelectorAll('[data-share]')];
+    const btns = [...card.querySelectorAll('[data-scenario]')];
+    const base = +range.dataset.base, min = +range.min, max = +range.max;
+    const fmt = k => k >= 1000 ? '$' + (k / 1000).toFixed(2) + 'M' : '$' + Math.round(k) + 'K';
+    function render(v) {
+      v = Math.round(v);
+      total.textContent = sum.textContent = fmt(v);
+      let used = 0;
+      rows.forEach((r, i) => {
+        // last row takes the remainder so the rows always add up to the total
+        const k = i === rows.length - 1 ? v - used : Math.round(+r.dataset.share * v / base);
+        used += k;
+        r.querySelector('.dv').textContent = fmt(k);
+      });
+      range.setAttribute('aria-valuetext', fmt(v));
+      range.style.setProperty('--fill', (v - min) / (max - min));
+      btns.forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.value === v)));
+    }
+    range.addEventListener('input', () => { cancelAnimationFrame(range.__raf); render(+range.value); });
+    btns.forEach(b => b.addEventListener('click', () => {
+      tween(range, +range.value, +b.dataset.value, 600, v => { range.value = v; render(v); });
+    }));
+    render(+range.value);
+  });
+
+  /* ---------- pinned steps: scroll position picks the step ---------- */
+  document.querySelectorAll('[data-steps]').forEach(sec => {
+    const steps = [...sec.querySelectorAll('.step')];
+    const count = sec.querySelector('[data-step-count]');
+    const flat = matchMedia('(max-width: 900px), (prefers-reduced-motion: reduce)');
+    const pad = n => String(n).padStart(2, '0');
+    let cur = -1;
+    function update() {
+      if (flat.matches) return;
+      const r = sec.getBoundingClientRect();
+      const p = Math.min(1, Math.max(0, -r.top / (r.height - innerHeight)));
+      sec.style.setProperty('--p', p);
+      const i = Math.min(steps.length - 1, Math.floor(p * steps.length));
+      if (i === cur) return;
+      cur = i;
+      steps.forEach((s, j) => s.classList.toggle('on', j === i));
+      count.textContent = pad(i + 1) + ' / ' + pad(steps.length);
+    }
+    update();
+    addEventListener('scroll', update, { passive: true });
+    addEventListener('resize', update);
+  });
+
+  /* ---------- word list: each word swaps the image panel ---------- */
+  document.querySelectorAll('[data-words]').forEach(sec => {
+    const words = [...sec.querySelectorAll('.word')];
+    const show = w => words.forEach(x => {
+      const on = x === w;
+      x.setAttribute('aria-pressed', String(on));
+      document.getElementById(x.getAttribute('aria-controls')).classList.toggle('on', on);
+    });
+    words.forEach(w => ['click', 'mouseenter', 'focus'].forEach(ev => w.addEventListener(ev, () => show(w))));
+  });
+
   /* ---------- scroll reveal ---------- */
   if ('IntersectionObserver' in window) {
     const io = new IntersectionObserver(es => es.forEach(e => {
